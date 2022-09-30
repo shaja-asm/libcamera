@@ -49,13 +49,17 @@ int ToneMapping::configure(IPAContext &context,
 
 /**
  * \brief Fill in the parameter structure, and enable gamma control
- * \param context The shared IPA context
- * \param params The IPU3 parameters
+ * \param[in] context The shared IPA context
+ * \param[in] frame The frame context sequence number
+ * \param[in] frameContext The FrameContext for this frame
+ * \param[out] params The IPU3 parameters
  *
  * Populate the IPU3 parameter structure with our tone mapping look up table and
  * enable the gamma control module in the processing blocks.
  */
 void ToneMapping::prepare([[maybe_unused]] IPAContext &context,
+			  [[maybe_unused]] const uint32_t frame,
+			  [[maybe_unused]] IPAFrameContext &frameContext,
 			  ipu3_uapi_params *params)
 {
 	/* Copy the calculated LUT into the parameters buffer. */
@@ -71,14 +75,16 @@ void ToneMapping::prepare([[maybe_unused]] IPAContext &context,
 
 /**
  * \brief Calculate the tone mapping look up table
- * \param context The shared IPA context
- * \param frameContext The current frame context
- * \param stats The IPU3 statistics and ISP results
+ * \param[in] context The shared IPA context
+ * \param[in] frame The current frame sequence number
+ * \param[in] frameContext The current frame context
+ * \param[in] stats The IPU3 statistics and ISP results
  *
  * The tone mapping look up table is generated as an inverse power curve from
  * our gamma setting.
  */
-void ToneMapping::process(IPAContext &context, [[maybe_unused]] IPAFrameContext *frameContext,
+void ToneMapping::process(IPAContext &context, [[maybe_unused]] const uint32_t frame,
+			  [[maybe_unused]] IPAFrameContext &frameContext,
 			  [[maybe_unused]] const ipu3_uapi_stats_3a *stats)
 {
 	/*

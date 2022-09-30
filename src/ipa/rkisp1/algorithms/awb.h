@@ -16,18 +16,24 @@ namespace ipa::rkisp1::algorithms {
 class Awb : public Algorithm
 {
 public:
-	Awb() = default;
+	Awb();
 	~Awb() = default;
 
 	int configure(IPAContext &context, const IPACameraSensorInfo &configInfo) override;
-	void prepare(IPAContext &context, rkisp1_params_cfg *params) override;
+	void prepare(IPAContext &context, const uint32_t frame,
+		     IPAFrameContext &frameContext,
+		     rkisp1_params_cfg *params) override;
 	void queueRequest(IPAContext &context, const uint32_t frame,
+			  IPAFrameContext &frameContext,
 			  const ControlList &controls) override;
-	void process(IPAContext &context, IPAFrameContext *frameCtx,
+	void process(IPAContext &context, const uint32_t frame,
+		     IPAFrameContext &frameCtx,
 		     const rkisp1_stat_buffer *stats) override;
 
 private:
 	uint32_t estimateCCT(double red, double green, double blue);
+
+	bool rgbMode_;
 };
 
 } /* namespace ipa::rkisp1::algorithms */

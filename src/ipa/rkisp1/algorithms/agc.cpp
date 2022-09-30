@@ -73,8 +73,8 @@ Agc::Agc()
 int Agc::configure(IPAContext &context, const IPACameraSensorInfo &configInfo)
 {
 	/* Configure the default exposure and gain. */
-	context.frameContext.agc.gain = std::max(context.configuration.agc.minAnalogueGain, kMinAnalogueGain);
-	context.frameContext.agc.exposure = 10ms / context.configuration.sensor.lineDuration;
+	context.activeState.agc.gain = std::max(context.configuration.agc.minAnalogueGain, kMinAnalogueGain);
+	context.activeState.agc.exposure = 10ms / context.configuration.sensor.lineDuration;
 
 	/*
 	 * According to the RkISP1 documentation:
@@ -98,7 +98,10 @@ int Agc::configure(IPAContext &context, const IPACameraSensorInfo &configInfo)
 	context.configuration.agc.measureWindow.h_size = 3 * configInfo.outputSize.width / 4;
 	context.configuration.agc.measureWindow.v_size = 3 * configInfo.outputSize.height / 4;
 
-	/* \todo Use actual frame index by populating it in the frameContext. */
+	/*
+	 * \todo Use the upcoming per-frame context API that will provide a
+	 * frame index
+	 */
 	frameCount_ = 0;
 	return 0;
 }
@@ -140,14 +143,16 @@ utils::Duration Agc::filterExposure(utils::Duration exposureValue)
 
 /**
  * \brief Estimate the new exposure and gain values
- * \param[inout] frameContext The shared IPA frame Context
+ * \param[inout] context The shared IPA Context
+ * \param[in] frameContext The FrameContext for this frame
  * \param[in] yGain The gain calculated on the current brightness level
  * \param[in] iqMeanGain The gain calculated based on the relative luminance target
  */
-void Agc::computeExposure(IPAContext &context, double yGain, double iqMeanGain)
+void Agc::computeExposure(IPAContext &context, IPAFrameContext &frameContext,
+			  double yGain, double iqMeanGain)
 {
 	IPASessionConfiguration &configuration = context.configuration;
-	IPAFrameContext &frameContext = context.frameContext;
+	IPAActiveState &activeState = context.activeState;
 
 	/* Get the effective exposure and gain applied on the sensor. */
 	uint32_t exposure = frameContext.sensor.exposure;
@@ -216,8 +221,8 @@ void Agc::computeExposure(IPAContext &context, double yGain, double iqMeanGain)
 			      << stepGain;
 
 	/* Update the estimated exposure and gain. */
-	frameContext.agc.exposure = shutterTime / configuration.sensor.lineDuration;
-	frameContext.agc.gain = stepGain;
+	activeState.agc.exposure = shutterTime / configuration.sensor.lineDuration;
+	activeState.agc.gain = stepGain;
 }
 
 /**
@@ -275,15 +280,24 @@ double Agc::measureBrightness(const rkisp1_cif_isp_hist_stat *hist) const
 /**
  * \brief Process RkISP1 statistics, and run AGC operations
  * \param[in] context The shared IPA context
+ * \param[in] frame The frame context sequence number
+ * \param[in] frameContext The current frame context
  * \param[in] stats The RKISP1 statistics and ISP results
  *
  * Identify the current image brightness, and use that to estimate the optimal
  * new exposure and gain for the scene.
  */
-void Agc::process(IPAContext &context,
-		  [[maybe_unused]] IPAFrameContext *frameContext,
-		  const rkisp1_stat_buffer *stats)
+void Agc::process(IPAContext &context, [[maybe_unused]] const uint32_t frame,
+		  IPAFrameContext &frameContext, const rkisp1_stat_buffer *stats)
 {
+	/*
+	 * \todo Verify that the exposure and gain applied by the sensor for
+	 * this frame match what has been requested. This isn't a hard
+	 * requirement for stability of the AGC (the guarantee we need in
+	 * automatic mode is a perfect match between the frame and the values
+	 * we receive), but is important in manual mode.
+	 */
+
 	const rkisp1_cif_isp_stat *params = &stats->params;
 	ASSERT(stats->meas_type & RKISP1_CIF_ISP_STAT_AUTOEXP);
 
@@ -315,16 +329,20 @@ void Agc::process(IPAContext &context,
 			break;
 	}
 
-	computeExposure(context, yGain, iqMeanGain);
+	computeExposure(context, frameContext, yGain, iqMeanGain);
 	frameCount_++;
 }
 
 /**
  * \copydoc libcamera::ipa::Algorithm::prepare
  */
-void Agc::prepare(IPAContext &context, rkisp1_params_cfg *params)
+void Agc::prepare(IPAContext &context, const uint32_t frame,
+		  IPAFrameContext &frameContext, rkisp1_params_cfg *params)
 {
-	if (context.frameContext.frameCount > 0)
+	frameContext.agc.exposure = context.activeState.agc.exposure;
+	frameContext.agc.gain = context.activeState.agc.gain;
+
+	if (frame > 0)
 		return;
 
 	/* Configure the measurement window. */

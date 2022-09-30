@@ -14,6 +14,8 @@
 
 #include <libcamera/geometry.h>
 
+#include <libipa/fc_queue.h>
+
 namespace libcamera {
 
 namespace ipa::rkisp1 {
@@ -46,7 +48,47 @@ struct IPASessionConfiguration {
 	} hw;
 };
 
-struct IPAFrameContext {
+struct IPAActiveState {
+	struct {
+		uint32_t exposure;
+		double gain;
+	} agc;
+
+	struct {
+		struct {
+			struct {
+				double red;
+				double green;
+				double blue;
+			} manual;
+			struct {
+				double red;
+				double green;
+				double blue;
+			} automatic;
+		} gains;
+
+		unsigned int temperatureK;
+		bool autoEnabled;
+	} awb;
+
+	struct {
+		int8_t brightness;
+		uint8_t contrast;
+		uint8_t saturation;
+	} cproc;
+
+	struct {
+		bool denoise;
+	} dpf;
+
+	struct {
+		uint8_t denoise;
+		uint8_t sharpness;
+	} filter;
+};
+
+struct IPAFrameContext : public FrameContext {
 	struct {
 		uint32_t exposure;
 		double gain;
@@ -59,7 +101,7 @@ struct IPAFrameContext {
 			double blue;
 		} gains;
 
-		double temperatureK;
+		unsigned int temperatureK;
 		bool autoEnabled;
 	} awb;
 
@@ -67,31 +109,31 @@ struct IPAFrameContext {
 		int8_t brightness;
 		uint8_t contrast;
 		uint8_t saturation;
-		bool updateParams;
+		bool update;
 	} cproc;
 
 	struct {
 		bool denoise;
-		bool updateParams;
+		bool update;
 	} dpf;
 
 	struct {
 		uint8_t denoise;
 		uint8_t sharpness;
-		bool updateParams;
+		bool update;
 	} filter;
 
 	struct {
 		uint32_t exposure;
 		double gain;
 	} sensor;
-
-	unsigned int frameCount;
 };
 
 struct IPAContext {
 	IPASessionConfiguration configuration;
-	IPAFrameContext frameContext;
+	IPAActiveState activeState;
+
+	FCQueue<IPAFrameContext> frameContexts;
 };
 
 } /* namespace ipa::rkisp1 */

@@ -19,8 +19,10 @@ public:
 	ToneMapping();
 
 	int configure(IPAContext &context, const IPAConfigInfo &configInfo) override;
-	void prepare(IPAContext &context, ipu3_uapi_params *params) override;
-	void process(IPAContext &context, IPAFrameContext *frameContext,
+	void prepare(IPAContext &context, const uint32_t frame,
+		     IPAFrameContext &frameContext, ipu3_uapi_params *params) override;
+	void process(IPAContext &context, const uint32_t frame,
+		     IPAFrameContext &frameContext,
 		     const ipu3_uapi_stats_3a *stats) override;
 
 private:

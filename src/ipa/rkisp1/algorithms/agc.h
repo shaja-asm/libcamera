@@ -26,12 +26,16 @@ public:
 	~Agc() = default;
 
 	int configure(IPAContext &context, const IPACameraSensorInfo &configInfo) override;
-	void prepare(IPAContext &context, rkisp1_params_cfg *params) override;
-	void process(IPAContext &context, IPAFrameContext *frameContext,
+	void prepare(IPAContext &context, const uint32_t frame,
+		     IPAFrameContext &frameContext,
+		     rkisp1_params_cfg *params) override;
+	void process(IPAContext &context, const uint32_t frame,
+		     IPAFrameContext &frameContext,
 		     const rkisp1_stat_buffer *stats) override;
 
 private:
-	void computeExposure(IPAContext &Context, double yGain, double iqMeanGain);
+	void computeExposure(IPAContext &Context, IPAFrameContext &frameContext,
+			     double yGain, double iqMeanGain);
 	utils::Duration filterExposure(utils::Duration exposureValue);
 	double estimateLuminance(const rkisp1_cif_isp_ae_stat *ae, double gain);
 	double measureBrightness(const rkisp1_cif_isp_hist_stat *hist) const;

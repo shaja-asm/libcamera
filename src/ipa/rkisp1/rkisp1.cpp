@@ -40,13 +40,18 @@ using namespace std::literals::chrono_literals;
 
 namespace ipa::rkisp1 {
 
+/* Maximum number of frame contexts to be held */
+static constexpr uint32_t kMaxFrameContexts = 16;
+
 class IPARkISP1 : public IPARkISP1Interface, public Module
 {
 public:
+	IPARkISP1();
+
 	int init(const IPASettings &settings, unsigned int hwRevision,
 		 ControlInfoMap *ipaControls) override;
 	int start() override;
-	void stop() override {}
+	void stop() override;
 
 	int configure(const IPACameraSensorInfo &info,
 		      const std::map<uint32_t, IPAStream> &streamConfig,
@@ -70,9 +75,6 @@ private:
 	std::map<unsigned int, MappedFrameBuffer> mappedBuffers_;
 
 	ControlInfoMap ctrls_;
-
-	/* Camera sensor controls. */
-	bool autoExposure_;
 
 	/* revision-specific data */
 	rkisp1_cif_isp_version hwRevision_;
@@ -102,6 +104,11 @@ const ControlInfoMap::Map rkisp1Controls{
 };
 
 } /* namespace */
+
+IPARkISP1::IPARkISP1()
+	: context_({ {}, {}, { kMaxFrameContexts } })
+{
+}
 
 std::string IPARkISP1::logPrefix() const
 {
@@ -188,6 +195,11 @@ int IPARkISP1::start()
 	return 0;
 }
 
+void IPARkISP1::stop()
+{
+	context_.frameContexts.clear();
+}
+
 /**
  * \todo The RkISP1 pipeline currently provides an empty IPACameraSensorInfo
  * if the connected sensor does not provide enough information to properly
@@ -215,8 +227,6 @@ int IPARkISP1::configure([[maybe_unused]] const IPACameraSensorInfo &info,
 		return -EINVAL;
 	}
 
-	autoExposure_ = true;
-
 	int32_t minExposure = itExp->second.min().get<int32_t>();
 	int32_t maxExposure = itExp->second.max().get<int32_t>();
 
@@ -227,8 +237,10 @@ int IPARkISP1::configure([[maybe_unused]] const IPACameraSensorInfo &info,
 		<< "Exposure: " << minExposure << "-" << maxExposure
 		<< " Gain: " << minGain << "-" << maxGain;
 
-	/* Clean context at configuration */
-	context_ = {};
+	/* Clear the IPA context before the streaming session. */
+	context_.configuration = {};
+	context_.activeState = {};
+	context_.frameContexts.clear();
 
 	/* Set the hardware revision for the algorithms. */
 	context_.configuration.hw.revision = hwRevision_;
@@ -247,8 +259,6 @@ int IPARkISP1::configure([[maybe_unused]] const IPACameraSensorInfo &info,
 	context_.configuration.agc.maxShutterSpeed = maxExposure * context_.configuration.sensor.lineDuration;
 	context_.configuration.agc.minAnalogueGain = camHelper_->gain(minGain);
 	context_.configuration.agc.maxAnalogueGain = camHelper_->gain(maxGain);
-
-	context_.frameContext.frameCount = 0;
 
 	for (auto const &algo : algorithms()) {
 		int ret = algo->configure(context_, info);
@@ -291,12 +301,16 @@ void IPARkISP1::unmapBuffers(const std::vector<unsigned int> &ids)
 
 void IPARkISP1::queueRequest(const uint32_t frame, const ControlList &controls)
 {
+	IPAFrameContext &frameContext = context_.frameContexts.alloc(frame);
+
 	for (auto const &algo : algorithms())
-		algo->queueRequest(context_, frame, controls);
+		algo->queueRequest(context_, frame, frameContext, controls);
 }
 
 void IPARkISP1::fillParamsBuffer(const uint32_t frame, const uint32_t bufferId)
 {
+	IPAFrameContext &frameContext = context_.frameContexts.get(frame);
+
 	rkisp1_params_cfg *params =
 		reinterpret_cast<rkisp1_params_cfg *>(
 			mappedBuffers_.at(bufferId).planes()[0].data());
@@ -305,28 +319,29 @@ void IPARkISP1::fillParamsBuffer(const uint32_t frame, const uint32_t bufferId)
 	memset(params, 0, sizeof(*params));
 
 	for (auto const &algo : algorithms())
-		algo->prepare(context_, params);
+		algo->prepare(context_, frame, frameContext, params);
 
 	paramsBufferReady.emit(frame);
-	context_.frameContext.frameCount++;
 }
 
 void IPARkISP1::processStatsBuffer(const uint32_t frame, const uint32_t bufferId,
 				   const ControlList &sensorControls)
 {
+	IPAFrameContext &frameContext = context_.frameContexts.get(frame);
+
 	const rkisp1_stat_buffer *stats =
 		reinterpret_cast<rkisp1_stat_buffer *>(
 			mappedBuffers_.at(bufferId).planes()[0].data());
 
-	context_.frameContext.sensor.exposure =
+	frameContext.sensor.exposure =
 		sensorControls.get(V4L2_CID_EXPOSURE).get<int32_t>();
-	context_.frameContext.sensor.gain =
+	frameContext.sensor.gain =
 		camHelper_->gain(sensorControls.get(V4L2_CID_ANALOGUE_GAIN).get<int32_t>());
 
 	unsigned int aeState = 0;
 
 	for (auto const &algo : algorithms())
-		algo->process(context_, nullptr, stats);
+		algo->process(context_, frame, frameContext, stats);
 
 	setControls(frame);
 
@@ -335,8 +350,14 @@ void IPARkISP1::processStatsBuffer(const uint32_t frame, const uint32_t bufferId
 
 void IPARkISP1::setControls(unsigned int frame)
 {
-	uint32_t exposure = context_.frameContext.agc.exposure;
-	uint32_t gain = camHelper_->gainCode(context_.frameContext.agc.gain);
+	/*
+	 * \todo The frame number is most likely wrong here, we need to take
+	 * internal sensor delays and other timing parameters into account.
+	 */
+
+	IPAFrameContext &frameContext = context_.frameContexts.get(frame);
+	uint32_t exposure = frameContext.agc.exposure;
+	uint32_t gain = camHelper_->gainCode(frameContext.agc.gain);
 
 	ControlList ctrls(ctrls_);
 	ctrls.set(V4L2_CID_EXPOSURE, static_cast<int32_t>(exposure));
